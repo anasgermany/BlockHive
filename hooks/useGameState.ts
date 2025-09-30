@@ -73,7 +73,7 @@ export const useGameState = (difficulty: Difficulty) => {
   const [isGameOver, setIsGameOver] = useState(false);
   const [draggedPiece, setDraggedPiece] = useState<DraggedPieceInfo | null>(null);
   const [preview, setPreview] = useState<Map<string, string>>(new Map());
-  const [placingCells, setPlacingCells] = useState<Set<string>>(new Set());
+  const [placingCells, setPlacingCells] = useState<Map<string, number>>(new Map());
   const [clearingCells, setClearingCells] = useState<Set<string>>(new Set());
   const [isAnimating, setIsAnimating] = useState(false);
 
@@ -111,7 +111,7 @@ export const useGameState = (difficulty: Difficulty) => {
     setScore(0);
     setIsGameOver(false);
     setIsAnimating(false);
-    setPlacingCells(new Set());
+    setPlacingCells(new Map());
     setClearingCells(new Set());
   }, [boardRadius, shapes]);
 
@@ -132,14 +132,15 @@ export const useGameState = (difficulty: Difficulty) => {
     }
 
     setIsAnimating(true);
-    const newBoard = new Map(board);
-    const placedCoords = new Set<string>();
+    // FIX: Explicitly type `newBoard` as `Board` to help TypeScript's type inference.
+    const newBoard: Board = new Map(board);
+    const placedCoords = new Map<string, number>();
 
-    for (const cell of pieceToPlace.shape) {
+    pieceToPlace.shape.forEach((cell, index) => {
       const targetCoordStr = coordToString({ q: anchor.q + cell.q, r: anchor.r + cell.r });
       newBoard.set(targetCoordStr, pieceToPlace.color);
-      placedCoords.add(targetCoordStr);
-    }
+      placedCoords.set(targetCoordStr, index);
+    });
 
     setBoard(newBoard);
     setPlacingCells(placedCoords);
@@ -147,14 +148,15 @@ export const useGameState = (difficulty: Difficulty) => {
     setPieces(prevPieces => prevPieces.map(p => p?.id === pieceToPlace.id ? null : p));
 
     setTimeout(() => {
-      setPlacingCells(new Set());
+      setPlacingCells(new Map());
       const { linesToClear, cellsToClear } = checkForLineClears(newBoard, boardRadius);
 
       if (cellsToClear.size > 0) {
         playLineClearSound();
         setClearingCells(cellsToClear);
         setTimeout(() => {
-          const boardAfterClear = new Map(newBoard);
+          // FIX: Explicitly type `boardAfterClear` as `Board` to help TypeScript's type inference.
+          const boardAfterClear: Board = new Map(newBoard);
           cellsToClear.forEach(coordStr => boardAfterClear.set(coordStr, ''));
           setBoard(boardAfterClear);
           setClearingCells(new Set());
@@ -162,12 +164,17 @@ export const useGameState = (difficulty: Difficulty) => {
           setScore(prev => prev + Math.floor(linesToClear * POINTS_PER_LINE * (1 + (linesToClear - 1) * 0.5)));
           
           setPieces(prevPieces => {
-            const finalPieces = prevPieces.map(p => p === null ? getNewPiece(pieceToPlace.id, shapes) : p);
-            if (checkForGameOver(boardAfterClear, finalPieces)) {
+            const allPiecesUsed = prevPieces.every(p => p === null);
+            let nextPieces = prevPieces;
+            if (allPiecesUsed) {
+                nextPieces = [getNewPiece(1, shapes), getNewPiece(2, shapes), getNewPiece(3, shapes)];
+            }
+
+            if (checkForGameOver(boardAfterClear, nextPieces)) {
               playGameOverSound();
               setIsGameOver(true);
             }
-            return finalPieces;
+            return nextPieces;
           });
           
           setIsAnimating(false);
@@ -175,18 +182,22 @@ export const useGameState = (difficulty: Difficulty) => {
       } else {
         playPlaceSound();
         setPieces(prevPieces => {
-          const finalPieces = prevPieces.map(p => p === null ? getNewPiece(pieceToPlace.id, shapes) : p);
-           if (checkForGameOver(newBoard, finalPieces)) {
+            const allPiecesUsed = prevPieces.every(p => p === null);
+            let nextPieces = prevPieces;
+            if (allPiecesUsed) {
+                nextPieces = [getNewPiece(1, shapes), getNewPiece(2, shapes), getNewPiece(3, shapes)];
+            }
+           if (checkForGameOver(newBoard, nextPieces)) {
             playGameOverSound();
             setIsGameOver(true);
           }
-          return finalPieces;
+          return nextPieces;
         });
         setIsAnimating(false);
       }
     }, 400); // place animation duration
 
-  }, [board, pieces, canPlacePiece, checkForGameOver, boardRadius, shapes]);
+  }, [board, canPlacePiece, checkForGameOver, boardRadius, shapes]);
 
   const handleDragStart = useCallback((piece: Piece, offset: Coord) => {
     setDraggedPiece({ piece, offset });

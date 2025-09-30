@@ -9,9 +9,10 @@ interface HexagonProps {
   isPreview?: boolean;
   isPlacing?: boolean;
   isClearing?: boolean;
+  placingIndex?: number;
 }
 
-const Hexagon: React.FC<HexagonProps> = ({ q, r, fill, isPreview, isPlacing, isClearing }) => {
+const Hexagon: React.FC<HexagonProps> = ({ q, r, fill, isPreview, isPlacing, isClearing, placingIndex = 0 }) => {
   const hexWidth = Math.sqrt(3) * HEX_SIZE;
   const hexHeight = 2 * HEX_SIZE;
 
@@ -25,9 +26,11 @@ const Hexagon: React.FC<HexagonProps> = ({ q, r, fill, isPreview, isPlacing, isC
   }).join(' ');
   
   const animationClass = isPlacing ? 'animate-place' : isClearing ? 'animate-clear' : '';
+  const style = isPlacing ? { animationDelay: `${placingIndex * 50}ms` } : {};
+
 
   return (
-    <g transform={`translate(${x}, ${y})`} className={animationClass}>
+    <g transform={`translate(${x}, ${y})`} className={animationClass} style={style}>
       <polygon
         points={points}
         fill={fill === 'transparent' ? 'rgba(0,0,0,0.3)' : fill}

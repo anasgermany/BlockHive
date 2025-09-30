@@ -1,21 +1,28 @@
-
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { Board, Coord } from '../types';
 import Hexagon from './Hexagon';
 import { HEX_SIZE } from '../constants';
+import { useParticles } from './ParticleManager';
 
 interface GameBoardProps {
   board: Board;
   preview: Map<string, string>;
   boardRadius: number;
-  placingCells: Set<string>;
+  placingCells: Map<string, number>;
   clearingCells: Set<string>;
   onDragOver: (coord: Coord | null) => void;
   onDrop: (coord: Coord) => void;
 }
 
+const stringToCoord = (s: string): Coord => {
+  const [q, r] = s.split(',').map(Number);
+  return { q, r };
+};
+
 const GameBoard: React.FC<GameBoardProps> = ({ board, preview, boardRadius, placingCells, clearingCells, onDragOver, onDrop }) => {
   const [boardCoords, setBoardCoords] = useState<Coord[]>([]);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const particleManager = useParticles();
   
   const hexWidth = Math.sqrt(3) * HEX_SIZE;
   const hexHeight = 2 * HEX_SIZE;
@@ -34,79 +41,111 @@ const GameBoard: React.FC<GameBoardProps> = ({ board, preview, boardRadius, plac
     setBoardCoords(coords);
   }, [boardRadius]);
 
-  const pixelToHex = useCallback((x: number, y: number): Coord => {
-    const q = (Math.sqrt(3)/3 * x - 1/3 * y) / HEX_SIZE;
-    const r = (2/3 * y) / HEX_SIZE;
-    return hexRound({q, r});
-  }, []);
+  const getCoordFromMouseEvent = useCallback((e: React.MouseEvent): Coord | null => {
+    if (!svgRef.current) return null;
 
-  const hexRound = (frac: {q: number, r: number}): Coord => {
-    const q = Math.round(frac.q);
-    const r = Math.round(frac.r);
-    const s = Math.round(-frac.q - frac.r);
+    const svgPoint = svgRef.current.createSVGPoint();
+    svgPoint.x = e.clientX;
+    svgPoint.y = e.clientY;
 
-    const q_diff = Math.abs(q - frac.q);
-    const r_diff = Math.abs(r - frac.r);
-    const s_diff = Math.abs(s - (-frac.q - frac.r));
+    const ctm = svgRef.current.getScreenCTM();
+    if (!ctm) return null;
+    
+    const transformedPoint = svgPoint.matrixTransform(ctm.inverse());
+    const { x, y } = transformedPoint;
+    
+    // Convert pixel to axial coordinates (q, r)
+    const q_frac = (Math.sqrt(3)/3 * (x - boardWidth/2) - 1/3 * (y - boardHeight/2)) / HEX_SIZE;
+    const r_frac = (2/3 * (y - boardHeight/2)) / HEX_SIZE;
+    const s_frac = -q_frac - r_frac;
+
+    let q = Math.round(q_frac);
+    let r = Math.round(r_frac);
+    let s = Math.round(s_frac);
+
+    const q_diff = Math.abs(q - q_frac);
+    const r_diff = Math.abs(r - r_frac);
+    const s_diff = Math.abs(s - s_frac);
 
     if (q_diff > r_diff && q_diff > s_diff) {
-        return { q: -r -s, r: r };
+      q = -r - s;
     } else if (r_diff > s_diff) {
-        return { q: q, r: -q -s };
+      r = -q - s;
     } else {
-        return { q: q, r: r };
+      s = -q - r;
     }
-  };
+    
+    return { q, r };
+  }, [boardWidth, boardHeight]);
+  
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const coord = getCoordFromMouseEvent(e);
+    onDragOver(coord);
+  }, [getCoordFromMouseEvent, onDragOver]);
 
-  const handleDragOver = (e: React.DragEvent<SVGSVGElement>) => {
+  const handleDrop = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    const svg = e.currentTarget;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const transformed = pt.matrixTransform(svg.getScreenCTM()?.inverse());
-    const hexCoord = pixelToHex(transformed.x - boardWidth/2, transformed.y - boardHeight/2);
-    onDragOver(hexCoord);
+    const coord = getCoordFromMouseEvent(e);
+    if (coord) {
+      onDrop(coord);
+    }
+  }, [getCoordFromMouseEvent, onDrop]);
+  
+  const handleDragLeave = () => {
+    onDragOver(null);
   };
   
-  const handleDrop = (e: React.DragEvent<SVGSVGElement>) => {
-    e.preventDefault();
-    const svg = e.currentTarget;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const transformed = pt.matrixTransform(svg.getScreenCTM()?.inverse());
-    const hexCoord = pixelToHex(transformed.x - boardWidth/2, transformed.y - boardHeight/2);
-    onDrop(hexCoord);
-  };
+  useEffect(() => {
+    if (clearingCells.size > 0 && particleManager && svgRef.current) {
+        const svgRect = svgRef.current.getBoundingClientRect();
+        clearingCells.forEach(cellStr => {
+            const { q, r } = stringToCoord(cellStr);
+            const x = hexWidth * (q + r / 2) + boardWidth / 2 + svgRect.left;
+            const y = hexHeight * 3 / 4 * r + boardHeight / 2 + svgRect.top;
+
+            particleManager.addParticles({
+                count: 5,
+                x: x,
+                y: y,
+                color: '#fef08a',
+            });
+        });
+    }
+  }, [clearingCells, particleManager, hexWidth, hexHeight, boardWidth, boardHeight]);
 
   return (
-    <div className="flex justify-center items-center my-4">
+    <div 
+      className="relative w-full aspect-square my-2"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+    >
       <svg
-        width={boardWidth}
-        height={boardHeight}
+        ref={svgRef}
         viewBox={`0 0 ${boardWidth} ${boardHeight}`}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-        onDragLeave={() => onDragOver(null)}
-        className="drop-shadow-lg"
+        className="absolute inset-0 w-full h-full"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleDragLeave}
       >
         <g transform={`translate(${boardWidth / 2}, ${boardHeight / 2})`}>
           {boardCoords.map(({ q, r }) => {
             const key = `${q},${r}`;
-            const color = preview.get(key) || board.get(key) || 'transparent';
-            const isPreview = preview.has(key);
             const isPlacing = placingCells.has(key);
+            const placingIndex = placingCells.get(key);
             const isClearing = clearingCells.has(key);
+            let fill = board.get(key) || 'transparent';
+            if (preview.has(key)) {
+                fill = preview.get(key)!;
+            }
 
             return (
               <Hexagon
                 key={key}
                 q={q}
                 r={r}
-                fill={color}
-                isPreview={isPreview}
+                fill={fill}
+                isPreview={preview.has(key)}
                 isPlacing={isPlacing}
+                placingIndex={placingIndex}
                 isClearing={isClearing}
               />
             );
